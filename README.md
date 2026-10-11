@@ -93,7 +93,7 @@ All of these rules are enforced on the server. The permission rules live in one 
 | Resolving doubts | Mentors and admins                      | **Mark resolved** / **Reopen** in the message menu or in **Group info → Doubts** (filter: Open, Resolved, All)                  |
 | Reply / quote    | Anyone who can post in the conversation | **Reply** in a message's menu. The reply shows a quote of the original; tapping the quote scrolls back to it                    |
 
-- **Message menu:** the arrow next to each message opens its actions. It appears on hover with a mouse and is always shown on touch screens. Only actions the server will accept from that person are offered.
+- **Message menu:** the arrow next to each message opens its actions. It appears on hover with a mouse and is always shown on touch screens; on phones, touching and holding a message also opens it. On larger screens it opens as a dropdown over the message; on phones it slides up from the bottom of the screen with large reaction buttons. Only actions the server will accept from that person are offered.
 - **Jumping to a message:** opening a pin, a doubt, an announcement or a reply quote loads older history as needed (up to 2,000 messages back), scrolls to the message and briefly highlights it.
 - **Live updates:** pinning, unpinning, editing, reacting and changing a doubt's status are broadcast to the conversation as `message:updated`, so every member's bubbles, pinned bar and open lists update without a refresh.
 - **Server checks:** a doubt must be the mentee's own message in a group; announcements and doubts cannot be combined; a reply must point to a message in the same conversation that has not been deleted; actions on a message the user cannot see answer `404`. The quote is saved with the reply, so it stays readable when the original is far back in the history.
@@ -190,7 +190,7 @@ Deleting is "for everyone": the message keeps its place and shows "This message 
 ### Read receipts and reactions
 
 - **Read receipts:** each member's read position (the newest message they have seen) is already stored for unread counts. When it moves, the server sends `receipt:updated` to the conversation, and the sender's tick turns into a green double tick once every other member has read the message ("Read" in private chats, "Read by everyone" in groups). In groups, **Message info** on your own message lists who has read it and who has not.
-- **Reactions:** 👍 ❤️ 😂 😮 🙏 🎉, from the bar at the top of the message menu or by tapping an existing reaction chip. Each person can add each emoji once per message (several different ones are allowed); tapping your own reaction removes it. Chips show the count, highlight your own and list who reacted.
+- **Reactions:** 👍 ❤️ 😂 😮 🙏 🎉, from the row at the top of the message menu or by tapping an existing reaction chip. Each person can add each emoji once per message (several different ones are allowed); tapping your own reaction removes it. Chips show the count, highlight your own and list who reacted.
 - **Rules:** anyone who can post in the conversation can react; read-only private chats, deleted messages and system notes cannot be reacted to. Adding a reaction is a single conditional database update, so double clicks or two tabs never store it twice. Deleting a message removes its reactions.
 
 ### Importing WhatsApp chats
@@ -249,7 +249,8 @@ Setup: create a key in the [Groq console](https://console.groq.com/keys) and set
 Most students use phones, so every screen is designed for a 375 px wide phone first and checked on tablets and desktops.
 
 - **Layout:** on phones the chat list and an open conversation are separate screens with a back button; from 768 px they sit side by side, and from 1024 px group info opens as a side panel instead of a full-screen sheet. The header shows icons only on small phones. Browser tests check that the chat and admin screens do not scroll sideways at 375 px.
-- **Touch:** the send, attach, back and header buttons are 40–44 px; the message menu button is always visible on touch screens (it appears on hover with a mouse); Enter adds a new line on touch keyboards while the send button sends. Text fields use 16 px text so iOS does not zoom in.
+- **Touch:** the send, attach, emoji, back and header buttons are 40–44 px; the message menu button is always visible on touch screens (it appears on hover with a mouse) and a long press on a message opens the same menu; Enter adds a new line on touch keyboards while the send button sends. Text fields use 16 px text so iOS does not zoom in.
+- **Emoji:** the smiley button in the message box opens a WhatsApp-style emoji popup over the chat, with category tabs, search and a recently used row (remembered in that browser). Emoji go in where the cursor is, and the popup closes on a click or tap anywhere else, or with Escape. On phones the keyboard makes way while it is open.
 - **Phones with notches:** the message box stays above the home indicator, and content keeps clear of the notch in landscape.
 - **Keyboard and screen readers:** dialogs move focus inside, keep it there and return it when closed; menus open with focus on their first item and close with Escape; every icon-only button has a label; new messages are announced through a live region.
 - **Readability:** timestamps and other secondary text were darkened to meet the WCAG AA contrast ratio (4.5:1) on the main backgrounds.

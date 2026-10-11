@@ -9,11 +9,13 @@ import {
   Pin,
   RotateCw,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { LinkifiedText } from '../../../components/LinkifiedText';
 import { Avatar } from '../../../components/ui/Avatar';
 import { RoleBadge } from '../../../components/ui/RoleBadge';
+import { useLongPress } from '../../../hooks/useLongPress';
 import { Attachment, ChatMessage, Message } from '../../../types/message';
+import { messageSummary } from '../../../utils/attachments';
 import { cn } from '../../../utils/cn';
 import { isReadByEveryone, ReadState } from '../../../utils/receipts';
 import { formatMessageTime } from '../../../utils/time';
@@ -22,7 +24,7 @@ import { AttachmentImage } from './attachments/AttachmentImage';
 import { ImageViewer } from './attachments/ImageViewer';
 import { DoubtChip } from './DoubtChip';
 import { toggleReaction } from './messageActions';
-import { MessageMenu } from './MessageMenu';
+import { MessageMenu, MessageMenuHandle } from './MessageMenu';
 import { MessageMenuContext, menuItemsFor } from './messageMenuItems';
 
 interface MessageBubbleProps {
@@ -183,6 +185,23 @@ export function MessageBubble({
   const shownAttachment = !isDeleted && attachment ? { ...message, attachment } : null;
   const canReact = menu.canReply && !message.delivery && !isDeleted && message.type !== 'system';
   const resolverName = doubt?.resolvedBy ? nameOf(doubt.resolvedBy) : undefined;
+  const menuRef = useRef<MessageMenuHandle>(null);
+  const longPress = useLongPress(() => menuRef.current?.open());
+  const menuItems = menuItemsFor(message, isOwn, menu);
+  const reactionChoices = canReact
+    ? {
+        mine: message.reactions
+          .filter((r) => r.userIds.includes(menu.viewerId))
+          .map((r) => r.emoji),
+        onToggle: (emoji: string) =>
+          void toggleReaction(
+            message,
+            emoji,
+            message.reactions.some((r) => r.emoji === emoji && r.userIds.includes(menu.viewerId)),
+          ),
+      }
+    : undefined;
+  const hasMenu = menuItems.length > 0 || reactionChoices !== undefined;
   const ringClass = highlighted
     ? 'ring-2 ring-marigold-400 ring-offset-2 ring-offset-paper'
     : message.delivery === 'failed'
@@ -215,8 +234,12 @@ export function MessageBubble({
       >
         <div className={cn('flex min-w-0 flex-col', isOwn && 'items-end')}>
           <div
+            {...(hasMenu ? longPress : {})}
             className={cn(
               'min-w-0 max-w-full rounded-2xl px-3.5 py-2 text-ink shadow-bubble transition-shadow duration-500',
+              // A hold opens the actions on touch screens instead of selecting text.
+              hasMenu &&
+                '[@media(pointer:coarse)]:select-none [@media(pointer:coarse)]:[-webkit-touch-callout:none]',
               isAnnouncement ? 'bg-marigold-50' : isOwn ? 'bg-pine-100' : 'bg-paper-raised',
               startsRun && !isAnnouncement && (isOwn ? 'rounded-tr-md' : 'rounded-tl-md'),
               // An image sets the bubble's width; its caption wraps beneath it.
@@ -316,25 +339,14 @@ export function MessageBubble({
         </div>
 
         <MessageMenu
-          items={menuItemsFor(message, isOwn, menu)}
-          align={isOwn ? 'end' : 'start'}
-          reactions={
-            canReact
-              ? {
-                  mine: message.reactions
-                    .filter((r) => r.userIds.includes(menu.viewerId))
-                    .map((r) => r.emoji),
-                  onToggle: (emoji) =>
-                    void toggleReaction(
-                      message,
-                      emoji,
-                      message.reactions.some(
-                        (r) => r.emoji === emoji && r.userIds.includes(menu.viewerId),
-                      ),
-                    ),
-                }
-              : undefined
-          }
+          ref={menuRef}
+          items={menuItems}
+          align={isOwn ? 'start' : 'end'}
+          reactions={reactionChoices}
+          context={{
+            name: isOwn ? 'You' : (senderName ?? 'Message'),
+            text: isDeleted ? 'This message was deleted' : messageSummary(message),
+          }}
         />
       </div>
 

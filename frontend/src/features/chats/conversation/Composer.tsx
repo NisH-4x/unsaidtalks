@@ -7,6 +7,7 @@ import {
   Pencil,
   Reply,
   SendHorizontal,
+  Smile,
   X,
 } from 'lucide-react';
 import {
@@ -29,15 +30,18 @@ import {
   messageSummary,
 } from '../../../utils/attachments';
 import { cn } from '../../../utils/cn';
+import { insertText } from '../../../utils/insertText';
+import { EmojiPanel } from './EmojiPanel';
 
 const MAX_LENGTH = 4000;
 const SHOW_COUNTER_FROM = 3600;
 const MAX_HEIGHT_PX = 160;
-// Kept short so it fits on one line beside the buttons on narrow phones.
-const DEFAULT_PLACEHOLDER = 'Write a message…';
+// Placeholders are kept short so they fit on one line beside the buttons on 360 px phones.
+const DEFAULT_PLACEHOLDER = 'Message';
 
+const touchScreen = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
 // On touch keyboards Enter adds a new line (like WhatsApp); the send button sends.
-const enterSends = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches;
+const enterSends = !touchScreen;
 
 /** The special kind of message this viewer may post here: mentors announce, mentees ask. */
 export type ComposerMode = 'announcement' | 'doubt' | null;
@@ -67,7 +71,7 @@ const MODES = {
     icon: Megaphone,
     toggleLabel: 'Post as announcement',
     note: 'Posting as an announcement. It stands out for everyone and is listed under Announcements.',
-    placeholder: 'Write an announcement…',
+    placeholder: 'Announcement…',
     activeClass: 'bg-marigold-100 text-marigold-700 ring-1 ring-marigold-300',
     noteClass: 'bg-marigold-50 text-marigold-700',
   },
@@ -75,7 +79,7 @@ const MODES = {
     icon: CircleQuestionMark,
     toggleLabel: 'Ask as doubt',
     note: 'Asking as a doubt. Mentors can find it under Doubts and mark it resolved.',
-    placeholder: 'Describe your doubt…',
+    placeholder: 'Your doubt…',
     activeClass: 'bg-clay-50 text-clay-600 ring-1 ring-clay-200',
     noteClass: 'bg-clay-50 text-clay-600',
   },
@@ -177,8 +181,13 @@ export function Composer({
   const [special, setSpecial] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const emojiPanelRef = useRef<HTMLDivElement>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
+  // Where the next emoji goes while the box is not focused (the phone keyboard is hidden).
+  const pendingCaretRef = useRef<number | null>(null);
   const trimmedText = text.trim();
   // An edit must change something, and a text message cannot become empty (a caption can).
   const canSend = editing
@@ -199,6 +208,32 @@ export function Composer({
     fitHeight(input);
   }, [editing]);
 
+  // Like WhatsApp, the emoji popup closes on a click or tap anywhere else, or on Escape.
+  // On computers the message box counts as inside, so the caret can still be moved.
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const insideRefs = touchScreen
+      ? [emojiPanelRef, emojiButtonRef]
+      : [emojiPanelRef, emojiButtonRef, inputRef];
+    const onPointerDown = (event: Event) => {
+      const target = event.target as Node;
+      if (!insideRefs.some((ref) => ref.current?.contains(target))) setEmojiOpen(false);
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setEmojiOpen(false);
+      if (!touchScreen) inputRef.current?.focus();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [emojiOpen]);
+
   function fitHeight(element: HTMLTextAreaElement) {
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, MAX_HEIGHT_PX)}px`;
@@ -212,6 +247,37 @@ export function Composer({
     }
     setFile(candidate);
     inputRef.current?.focus();
+  }
+
+  function insertEmoji(emoji: string) {
+    const input = inputRef.current;
+    if (!input) return;
+    const focused = document.activeElement === input;
+    const pending = focused ? null : pendingCaretRef.current;
+    const result = insertText(
+      text,
+      emoji,
+      pending ?? input.selectionStart,
+      pending ?? input.selectionEnd,
+      MAX_LENGTH,
+    );
+    if (!result) return;
+    setText(result.value);
+    pendingCaretRef.current = focused ? null : result.caret;
+    requestAnimationFrame(() => {
+      if (focused) input.setSelectionRange(result.caret, result.caret);
+      fitHeight(input);
+    });
+    if (!editing) onTyping();
+  }
+
+  function toggleEmojiPanel() {
+    const opening = !emojiOpen;
+    setEmojiOpen(opening);
+    if (!touchScreen) return;
+    // On phones the keyboard makes way for the popup, and comes back when it closes.
+    if (opening) inputRef.current?.blur();
+    else inputRef.current?.focus();
   }
 
   function submit() {
@@ -231,6 +297,7 @@ export function Composer({
     setText('');
     setFile(null);
     setSpecial(false);
+    pendingCaretRef.current = null;
     if (inputRef.current) {
       inputRef.current.style.height = '';
       inputRef.current.focus();
@@ -264,6 +331,10 @@ export function Composer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Escape' && emojiOpen) {
+      setEmojiOpen(false);
+      return;
+    }
     if (event.key === 'Escape' && (editing || replyTo)) {
       if (editing) onCancelEdit();
       else onCancelReply();
@@ -284,7 +355,7 @@ export function Composer({
       }}
       onDrop={handleDrop}
       className={cn(
-        'shrink-0 border-t border-line bg-paper-raised px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] transition-colors sm:px-4',
+        'relative shrink-0 border-t border-line bg-paper-raised px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] transition-colors sm:px-4',
         dragging && 'bg-pine-50 ring-2 ring-inset ring-pine-400',
       )}
     >
@@ -302,6 +373,15 @@ export function Composer({
           <activeMode.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
           {activeMode.note}
         </p>
+      )}
+
+      {emojiOpen && (
+        // Floats over the messages, lined up with the left edge of the message box row.
+        <div className="pointer-events-none absolute inset-x-3 bottom-full z-20 mb-2 sm:inset-x-4">
+          <div className="mx-auto max-w-3xl">
+            <EmojiPanel ref={emojiPanelRef} onPick={insertEmoji} className="pointer-events-auto" />
+          </div>
+        </div>
       )}
 
       <div className="mx-auto flex max-w-3xl items-end gap-1.5 sm:gap-2">
@@ -344,26 +424,47 @@ export function Composer({
             <modeConfig.icon className="h-5 w-5" aria-hidden="true" />
           </button>
         )}
-        {/* 16px text stops iOS Safari from zooming into the field on focus. */}
-        <textarea
-          ref={inputRef}
-          value={text}
-          onChange={(event) => {
-            setText(event.target.value);
-            fitHeight(event.target);
-            if (editing) return;
-            if (event.target.value.trim()) onTyping();
-            else onStopTyping();
-          }}
-          onBlur={onStopTyping}
-          onKeyDown={handleKeyDown}
-          onPaste={editing ? undefined : handlePaste}
-          rows={1}
-          maxLength={MAX_LENGTH}
-          placeholder={file ? 'Add a caption…' : (activeMode?.placeholder ?? DEFAULT_PLACEHOLDER)}
-          aria-label="Message"
-          className="max-h-40 min-h-[2.75rem] min-w-0 flex-1 resize-none rounded-2xl border border-line bg-paper-sunk/60 px-4 py-2.5 text-base leading-snug text-ink placeholder:text-ink-faint focus:border-pine-400 focus:bg-paper-raised focus:outline-none focus:ring-4 focus:ring-pine-100"
-        />
+        <div className="relative min-w-0 flex-1">
+          <button
+            ref={emojiButtonRef}
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={toggleEmojiPanel}
+            aria-label={emojiOpen ? 'Close emoji' : 'Add emoji'}
+            aria-haspopup="dialog"
+            aria-expanded={emojiOpen}
+            className={cn(
+              'absolute bottom-1 left-1 flex h-9 w-9 items-center justify-center rounded-full transition-colors',
+              emojiOpen ? 'bg-pine-100 text-pine-700' : 'text-ink-muted hover:text-ink-soft',
+            )}
+          >
+            <Smile className="h-5 w-5" aria-hidden="true" />
+          </button>
+          {/* 16px text stops iOS Safari from zooming into the field on focus. */}
+          <textarea
+            ref={inputRef}
+            value={text}
+            onChange={(event) => {
+              setText(event.target.value);
+              fitHeight(event.target);
+              if (editing) return;
+              if (event.target.value.trim()) onTyping();
+              else onStopTyping();
+            }}
+            onFocus={() => {
+              pendingCaretRef.current = null;
+              if (touchScreen) setEmojiOpen(false);
+            }}
+            onBlur={onStopTyping}
+            onKeyDown={handleKeyDown}
+            onPaste={editing ? undefined : handlePaste}
+            rows={1}
+            maxLength={MAX_LENGTH}
+            placeholder={file ? 'Add a caption…' : (activeMode?.placeholder ?? DEFAULT_PLACEHOLDER)}
+            aria-label="Message"
+            className="block max-h-40 min-h-[2.75rem] w-full resize-none rounded-2xl border border-line bg-paper-sunk/60 py-2.5 pl-11 pr-4 text-base leading-snug text-ink placeholder:text-ink-faint focus:border-pine-400 focus:bg-paper-raised focus:outline-none focus:ring-4 focus:ring-pine-100"
+          />
+        </div>
         <button
           type="submit"
           disabled={!canSend}
