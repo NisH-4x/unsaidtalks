@@ -6,7 +6,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['dist', 'playwright-report', 'test-results'] },
+  { ignores: ['dist'] },
   {
     files: ['src/**/*.{ts,tsx}'],
     extends: [
@@ -21,7 +21,7 @@ export default defineConfig(
     },
   },
   {
-    files: ['e2e/**/*.ts', '*.config.ts'],
+    files: ['*.config.ts'],
     extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: {
       ecmaVersion: 2022,

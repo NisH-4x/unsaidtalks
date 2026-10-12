@@ -144,7 +144,7 @@ erDiagram
 - New optional fields, such as reactions, can be added without database migrations.
 - Trade-off: MongoDB has no foreign keys, so the rules are checked in the code and with unique indexes.
 
-More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (more diagrams, message flow, login sessions) and [docs/DATABASE.md](docs/DATABASE.md) (every field and index).
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (more diagrams, who can do what, security, deployment) and [docs/DATABASE.md](docs/DATABASE.md) (all fields and indexes).
 
 ## 2. Setup and sample logins
 
@@ -159,11 +159,18 @@ git clone https://github.com/NisH-4x/unsaidtalks.git
 cd unsaidtalks
 ```
 
-**2. Add the backend settings.** Copy `backend/.env.example` to `backend/.env` and fill in:
+**2. Add the backend settings.** Create `backend/.env` (you can copy `backend/.env.example`) and give each key a value:
 
-- `MONGODB_URI`: your Atlas connection string
-- `JWT_ACCESS_SECRET`: any random text of at least 32 characters
-- `GROQ_API_KEY`: optional, only needed for AI doubt summaries
+```env
+NODE_ENV=development
+PORT=3000
+CLIENT_ORIGIN=http://localhost:5173
+MONGODB_URI=<your Atlas connection string>
+JWT_ACCESS_SECRET=<any random text of at least 32 characters>
+GROQ_API_KEY=
+```
+
+Don't leave the first three empty, or the backend will not start. `GROQ_API_KEY` is optional: leave it empty to turn AI summaries off. In Atlas, allow your IP address under **Network Access**.
 
 **3. Start the backend**
 
@@ -182,7 +189,9 @@ npm install
 npm run dev      # open http://localhost:5173
 ```
 
-All settings, Atlas access, tests and deployment are explained in [docs/DETAILS.md](docs/DETAILS.md).
+**Unit tests:** run `npm test` in `backend` or `frontend`.
+
+**Deployment:** the backend runs on Render and the frontend on Vercel. The settings are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#deployment).
 
 ### Sample login accounts
 
@@ -234,7 +243,7 @@ When an admin adds someone to a group, the server moves that person's connection
 | Server → app | `notification:new`                            | A reply, announcement or resolved doubt for you                                |
 | Server → app | `conversation:added` / `conversation:removed` | You were added to, or removed from, a group                                    |
 
-The full list is in [docs/DETAILS.md](docs/DETAILS.md#real-time-design-in-depth).
+The full list is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#socket-events).
 
 ### What happens when you send a message
 
@@ -282,7 +291,7 @@ sequenceDiagram
 
 | Bonus                                | Status                                                                                                |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| WhatsApp chat import (`.txt` export) | ✅ Done                                                                                               |
+| WhatsApp chat import (`.txt` export) | ✅ Done (try it with [this sample file](docs/samples/whatsapp-export-sample.txt))                     |
 | AI summary of a group's open doubts  | ✅ Done (Groq)                                                                                        |
 | Search messages in a group           | ✅ Done                                                                                               |
 | Read receipts and emoji reactions    | ✅ Done                                                                                               |
@@ -290,7 +299,7 @@ sequenceDiagram
 | Deployed live link                   | ✅ Done: https://unsaidtalks.vercel.app                                                               |
 | Browser push notifications           | 🟡 Partly: desktop notifications work while the site is open in a tab, not when the browser is closed |
 
-**Also added:** an emoji picker in the message box, a WhatsApp-style message menu on phones (touch and hold a message), and automated tests (unit, API and browser tests on desktop and phone screens).
+**Also added:** an emoji picker in the message box, a WhatsApp-style message menu on phones (touch and hold a message), and unit tests for the core logic (permission rules, file checks, WhatsApp parsing, search and more).
 
 ### Pending
 
@@ -299,7 +308,6 @@ sequenceDiagram
 
 ## More documents
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system diagram, modules, message flow, login sessions, where each rule is checked
-- [docs/DATABASE.md](docs/DATABASE.md): every collection, field and index
-- [docs/DETAILS.md](docs/DETAILS.md): how each feature works, all API and socket events, settings, tests and deployment
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system diagram, modules, message flow, all socket events, login, who can do what, security, deployment
+- [docs/DATABASE.md](docs/DATABASE.md): schema diagram, collections and indexes
 - [docs/ASSIGNMENT.md](docs/ASSIGNMENT.md): the original assignment brief

@@ -1,75 +1,74 @@
 # Architecture
 
-How the UnsaidTalks chat portal is put together: the deployed system, the backend modules, how a message travels, how sessions work, and where each rule is enforced. The database is described in [DATABASE.md](DATABASE.md); WebSocket rooms and events are explained in the [README](../README.md#3-real-time-design), with the full event list in [DETAILS.md](DETAILS.md#real-time-design-in-depth).
+How UnsaidTalks is built, in short. The database is described in [DATABASE.md](DATABASE.md).
 
-## System overview
+## System diagram
 
 ```mermaid
 flowchart LR
   subgraph Browser["Browser (phone or desktop)"]
-    SPA["React 17 single-page app<br/>Zustand stores, Socket.IO client"]
+    SPA["React 17 app<br/>Zustand stores, Socket.IO client"]
     Notify["Notification API<br/>(desktop notifications)"]
   end
 
   subgraph Vercel["Vercel"]
-    Static["Static files<br/>(Vite production build)"]
-    Proxy["Rewrite /api/* to Render<br/>(reverse proxy)"]
+    Static["Website files<br/>(Vite build)"]
+    Proxy["Forwards /api/* to Render"]
   end
 
-  subgraph Render["Render: NestJS 11 (one Node process)"]
-    REST["REST controllers<br/>/api/..."]
-    Gateway["Socket.IO gateway<br/>namespace /chat"]
-    Services["Domain services<br/>+ access policy"]
-    Events["Domain events<br/>(EventEmitter2)"]
+  subgraph Render["Render: NestJS 11"]
+    REST["REST API<br/>/api/..."]
+    Gateway["Socket.IO gateway<br/>/chat"]
+    Services["Services<br/>+ permission rules"]
+    Events["Events<br/>(after each save)"]
   end
 
-  Atlas[("MongoDB Atlas<br/>collections + GridFS files")]
+  Atlas[("MongoDB Atlas<br/>data + GridFS files")]
   Groq["Groq API<br/>(AI doubt summaries)"]
 
-  SPA -->|"HTTPS: page and assets"| Static
-  SPA -->|"HTTPS /api: refresh cookie + access token"| Proxy
+  SPA -->|"page and assets"| Static
+  SPA -->|"/api calls"| Proxy
   Proxy --> REST
-  SPA <-->|"WebSocket wss://.../chat: access token"| Gateway
+  SPA <-->|"WebSocket, signed in with a token"| Gateway
   REST --> Services
   Gateway --> Services
   Services --> Atlas
-  Services -->|"after each write"| Events
+  Services --> Events
   Events --> Gateway
-  Services -->|"server-side only"| Groq
+  Services -->|"server only"| Groq
   SPA --> Notify
 ```
 
-- **One origin for HTTP.** Vercel serves the app and forwards every `/api` request to the NestJS server on Render, so the browser sees a single site. That keeps the refresh-token cookie first-party (`SameSite=Strict`), which browsers that block third-party cookies (Safari, Firefox) would otherwise drop.
-- **Direct WebSocket.** The Socket.IO client connects straight to Render, because Vercel rewrites do not carry WebSocket connections. The socket authenticates with the in-memory access token in its handshake, not with a cookie, so being cross-origin is not a problem.
-- **Stateless HTTP, stateful sockets.** REST requests carry a JWT and can be served by any instance. Socket rooms and presence counts live in the one Node process; [Scaling](#scaling) explains what changes for several instances.
-- **Locally**, the Vite dev server plays Vercel's role: it serves the app on port 5173 and forwards `/api` and `/socket.io` to NestJS on port 3000.
+- **One website address:** Vercel serves the app and forwards every `/api` call to Render. The browser sees one site, so the login cookie keeps working.
+- **Live chat goes straight to Render,** because Vercel does not forward WebSockets. The socket signs in with the access token.
+- **On your computer,** the Vite dev server does Vercel's job: the app on port 5173, the API on port 3000.
 
-## The four layers the brief asks for
+## The four layers
 
-| Concern           | Where                                                                                      | Responsibilities                                                                                                                                                 |
-| ----------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auth and roles    | `backend/src/modules/auth`, `users`, `access`, `admin`                                     | Signup, login, JWT access tokens, rotating refresh tokens, mentor approval, role checks, user management. `access/access-policy.ts` holds every permission rule. |
-| Chat REST APIs    | `conversations`, `messages`, `attachments`, `moderation`, `notifications`, `imports`, `ai` | Groups, direct chats, chat list, history and search, mentor tools, edits and reactions, files, reports, notifications, WhatsApp import, AI summaries.            |
-| Real-time gateway | `backend/src/modules/realtime`                                                             | Authenticated socket connections, rooms, sending messages, presence, typing, and turning domain events into socket events.                                       |
-| Frontend UI       | `frontend/src`                                                                             | Screens (`features/`), state (`store/`), the socket connection (`realtime/`), API clients (`api/`), shared components and helpers.                               |
+| Layer             | Where                                                                                      | What it does                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Auth and roles    | `backend/src/modules/auth`, `users`, `access`, `admin`                                     | Sign up, login, tokens, mentor approval, permission rules          |
+| Chat REST APIs    | `conversations`, `messages`, `attachments`, `moderation`, `notifications`, `imports`, `ai` | Groups, chat list, history, mentor tools, files, reports, imports  |
+| Real-time gateway | `backend/src/modules/realtime`                                                             | Socket connections, rooms, sending messages, typing, online status |
+| Frontend UI       | `frontend/src`                                                                             | Screens, state, the socket connection, API calls                   |
 
 ### Backend modules
 
-| Module          | What it owns                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `auth`          | Login, signup, refresh and logout; `JwtAuthGuard` and `RolesGuard` (both global); refresh-token storage and reuse detection    |
-| `users`         | User records and their public view (name, role, last seen; never email to other users)                                         |
-| `access`        | Pure permission functions (`canPostAnnouncements`, `canResolveDoubts`, `canStartDirectChat`, …), covered by table-driven tests |
-| `admin`         | Admin screens' APIs: groups and members, users, mentor applications                                                            |
-| `conversations` | Groups, direct chats, memberships, chat list, unread counts and read positions                                                 |
-| `messages`      | Sending, history, search, editing, pins, doubts, announcements, replies, reactions, deletion, attachment upload and download   |
-| `attachments`   | GridFS storage, file type detection from content, safe file names                                                              |
-| `moderation`    | Reports and the admin review queue                                                                                             |
-| `notifications` | Reply, announcement and resolved-doubt notifications, created after delivery                                                   |
-| `imports`       | WhatsApp export parsing and importing history into a group                                                                     |
-| `ai`            | Groq client and the doubt summary (prompt, schema, reconciliation, cache)                                                      |
-| `realtime`      | Socket.IO gateway, presence counting, the per-user send limiter, and the listener that broadcasts domain events                |
-| `health`        | `GET /api/health` for the hosting platform's health check                                                                      |
+| Module          | Job                                                                  |
+| --------------- | -------------------------------------------------------------------- |
+| `auth`          | Login, signup, refresh, logout; the login and role guards            |
+| `users`         | User accounts and the public view of a user (never their email)      |
+| `access`        | Every "who can do what" rule, in one file: `access-policy.ts`        |
+| `admin`         | Admin screens: groups, members, users, mentor requests               |
+| `conversations` | Groups, private chats, memberships, unread counts                    |
+| `messages`      | Send, history, search, edit, pin, doubts, replies, reactions, delete |
+| `attachments`   | File storage in GridFS and file checks                               |
+| `moderation`    | Reports and the admin review screen                                  |
+| `notifications` | Reply, announcement and "doubt resolved" notifications               |
+| `imports`       | WhatsApp chat import                                                 |
+| `ai`            | AI summary of open doubts with Groq                                  |
+| `realtime`      | Socket.IO gateway, online status, message rate limit                 |
+| `health`        | `GET /api/health` for the hosting health check                       |
 
 ## How a message travels
 
@@ -85,37 +84,46 @@ sequenceDiagram
 
   A->>A: Show the draft with a clock icon and a random clientId
   A->>G: message:send (conversationId, text, clientId)
-  G->>G: Per-user limit, 10 messages per 5 seconds
+  G->>G: Limit: 10 messages per 5 seconds per user
   G->>M: send(user, message)
-  M->>DB: Check membership and permissions (access policy)
-  M->>DB: Insert message (unique senderId + clientId)
-  M->>DB: One update: last message, unread counts, sender's read position
-  M->>L: MessageCreated event
+  M->>DB: Check membership and permissions
+  M->>DB: Save message (unique senderId + clientId)
+  M->>DB: Update last message, unread counts, sender's read position
+  M->>L: message.created event
   L->>B: message:new to room conversation:id
-  G-->>A: Acknowledgement with the stored message
-  L->>L: Create notifications in a separate async step
+  G-->>A: Reply with the saved message
+  L->>L: Create notifications in a separate step
   L->>B: notification:new to room user:id
 ```
 
-- Whichever reaches the sender first, the broadcast or the acknowledgement, replaces the draft (matched by `clientId`). A retry after a timeout reuses the `clientId`, and the unique index returns the stored message instead of creating a second one.
-- Other changes follow the same path: REST controllers or the gateway call a service, the service writes to MongoDB and emits a domain event, and `RealtimeEventsListener` sends the matching socket event (`message:updated`, `receipt:updated`, `conversation:added`, …) to the right rooms.
+- The draft is matched with the saved message by `clientId`. A retry sends the same `clientId`, so a message is never saved twice.
+- Services never call the socket gateway directly. They save to MongoDB and emit an event; a listener sends the matching socket event to the right room. So every change reaches every open tab in the same way.
 
-### Domain events and who listens
+## Socket events
 
-| Event                                                          | Emitted when                                           | Listeners                                                                                 |
-| -------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `message.created`                                              | A message is stored                                    | Realtime (broadcast), Notifications (async)                                               |
-| `message.updated`                                              | Edit, reaction, pin, doubt change or deletion          | Realtime, Notifications (refresh previews, remove notifications of deleted messages)      |
-| `conversation.read`                                            | A member reads up to a message                         | Realtime (other tabs, read receipts), Notifications (mark that chat's notifications read) |
-| `conversation.unread-changed`, `conversation.history-imported` | A deletion changes unread counts; history was imported | Realtime                                                                                  |
-| `conversation.direct-created`                                  | A private chat starts                                  | Realtime (puts both people's sockets in the new room)                                     |
-| `group.created`, `group.members-added`, `group.member-removed` | Admin changes a group                                  | Group activity (system notes in the chat), Realtime (move sockets in or out of the room)  |
-| `notification.created` / `read` / `removed`                    | Notification changes                                   | Realtime (to the user's own room)                                                         |
-| `user.deactivated`                                             | Admin deactivates an account                           | Auth (revoke sessions), Realtime (disconnect sockets)                                     |
+**Rooms:** `user:<userId>` holds all tabs of one person; `conversation:<id>` holds all online members of a chat.
 
-Services never call the gateway directly. This keeps HTTP and socket code independent and makes every change reach every open tab the same way.
+| Event                                          | Direction    | Meaning                                                 |
+| ---------------------------------------------- | ------------ | ------------------------------------------------------- |
+| `message:send`                                 | App → server | Send a message; the reply is the saved message          |
+| `typing:start` / `typing:stop`                 | App → server | Started / stopped typing                                |
+| `presence:sync`                                | App → server | Which of my contacts are online now                     |
+| `conversation:open` / `conversation:close`     | App → server | An admin starts / stops following a group as moderator  |
+| `message:new`                                  | Server → app | New message                                             |
+| `message:updated`                              | Server → app | Message edited, deleted, pinned, reacted to or resolved |
+| `typing`                                       | Server → app | Someone is typing                                       |
+| `presence:update`                              | Server → app | Someone came online or went offline                     |
+| `receipt:updated`                              | Server → app | Someone read up to a message (read ticks)               |
+| `conversation:read`                            | Server → app | You read this chat in another tab                       |
+| `conversation:unread`                          | Server → app | An unread count changed after a delete                  |
+| `conversation:added` / `conversation:removed`  | Server → app | You were added to / removed from a group                |
+| `conversation:history`                         | Server → app | WhatsApp history was imported; reload the chat          |
+| `notification:new`                             | Server → app | New notification for you                                |
+| `notifications:read` / `notifications:removed` | Server → app | Notifications were read in another tab / removed        |
 
-## Sessions and tokens
+After a lost connection, the app reconnects on its own and loads anything it missed.
+
+## Login and sessions
 
 ```mermaid
 sequenceDiagram
@@ -124,53 +132,70 @@ sequenceDiagram
   participant DB as MongoDB
 
   B->>API: POST /auth/login (email, password)
-  API->>DB: Verify bcrypt hash, store SHA-256 of a new refresh token
+  API->>DB: Check bcrypt hash, store SHA-256 of a new refresh token
   API-->>B: Access token (15 min, kept in memory) + refresh cookie (7 days, httpOnly)
   Note over B: Page reload: the in-memory token is gone
   B->>API: POST /auth/refresh (cookie only)
-  API->>DB: Mark the old token rotated, store the new one
+  API->>DB: Mark the old token used, store the new one
   API-->>B: New access token + new refresh cookie
-  Note over B,API: A rotated token presented again means it was stolen: every session of that user is revoked
+  Note over B,API: An old token used again means it was stolen: all sessions of that user end
 ```
 
-- The access token never touches `localStorage` or cookies, so an injected script cannot read a long-lived credential; the refresh cookie is `httpOnly`, `SameSite=Strict`, `Secure` in production and scoped to `/api/auth`.
-- On a `401`, the API client refreshes once (concurrent requests share one refresh) and retries. The socket reads the current token on every reconnect attempt.
-- The global `JwtAuthGuard` reloads the account on each request, so deactivation or rejection takes effect immediately.
+- The access token is kept only in memory, never in `localStorage`, so a script injected into the page can't steal a long-lived login.
+- The refresh cookie is `httpOnly`, `SameSite=Strict` and `Secure`. Only a hash of it is stored.
+- Every request reloads the account, so a deactivated user is blocked straight away.
 
-## Where rules are enforced
+## Who can do what
 
-| Rule                                         | Enforced in                                                                                                                                             |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Who may open a conversation                  | `ConversationsService.requireAccess`: members, plus admins as moderators of groups; everyone else gets `404`                                            |
-| Who may post, pin, resolve, delete, react, … | `access-policy.ts` functions, called by services for REST and socket actions alike                                                                      |
-| Private chat rules (mentee ↔ mentor, etc.)   | `DirectChatsService` using `canStartDirectChat` / `canMessageDirectly`; read-only chats refuse new messages                                             |
-| Admin-only screens                           | `@Roles('admin')` with the global `RolesGuard`                                                                                                          |
-| Input shape and limits                       | DTOs with `class-validator`; the global `ValidationPipe` rejects unknown fields                                                                         |
-| Abuse limits                                 | Global HTTP limit (300 requests per minute per IP), sign-in and signup 10 per minute, AI summaries 6 per minute, socket sends 10 per 5 seconds per user |
-| Privacy                                      | Public user views contain no email; imported phone numbers are masked before storage                                                                    |
+| Action                                                    | Admin                  | Mentor                       | Mentee    |
+| --------------------------------------------------------- | ---------------------- | ---------------------------- | --------- |
+| Create groups, add members, approve mentors, manage users | ✅                     |                              |           |
+| Post announcements, pin messages (in groups)              | ✅                     | ✅                           |           |
+| Ask a doubt                                               |                        |                              | ✅        |
+| Mark a doubt resolved, see the AI doubt summary           | ✅                     | ✅                           |           |
+| Delete messages                                           | Own, and any in groups | Own, and any in their groups | Their own |
+| Report a message                                          | Deletes it directly    | ✅                           | ✅        |
+| Import a WhatsApp chat                                    | ✅                     |                              |           |
 
-The frontend mirrors the permission rules in `frontend/src/utils/permissions.ts` only to hide controls a person cannot use. The server is always the authority.
+**Private chats:** a mentee can message mentors of their groups; a mentor can message mentees and co-mentors of their groups; mentee-to-mentee only when the group allows it (off by default); an admin can message anyone.
+
+- All rules are in `backend/src/modules/access/access-policy.ts` and are checked on the server, for API calls and socket messages alike. The frontend only hides buttons a person can't use.
+- A conversation you don't belong to answers `404`, so you can't even tell it exists. Admins can open any group as moderators, but never private chats.
+
+## Security and privacy
+
+- Passwords are hashed with bcrypt. Emails are never sent to other users, and phone numbers from WhatsApp imports are masked.
+- Files: the type is checked from the file's content, not its name; the limit is 5 MB; a file is served only to people who can open its chat.
+- Limits: 10 sign-in attempts per minute, 300 requests per minute per IP address, 10 messages per 5 seconds per user, 6 AI summaries per minute.
+- The Groq key stays on the server. Only the group's open doubts (text, replies and display names) are sent to Groq, never emails.
+
+## Deployment
+
+|                | Backend on Render                                                                                                                   | Frontend on Vercel                                     |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Address        | https://unsaidtalks-api.onrender.com                                                                                                | https://unsaidtalks.vercel.app                         |
+| Root directory | `backend`                                                                                                                           | `frontend`                                             |
+| Build          | `npm ci --include=dev && npm run build`                                                                                             | `npm run build` (default)                              |
+| Start          | `npm start` (health check `/api/health`)                                                                                            | –                                                      |
+| Settings       | `NODE_ENV=production`, `MONGODB_URI`, `JWT_ACCESS_SECRET`, `CLIENT_ORIGIN` (the Vercel address), `TRUST_PROXY=true`, `GROQ_API_KEY` | `VITE_SOCKET_URL=https://unsaidtalks-api.onrender.com` |
+
+- `frontend/vercel.json` forwards `/api` to Render.
+- `TRUST_PROXY=true` lets the server see each visitor's real IP address, so rate limits apply per visitor.
+- MongoDB Atlas must allow connections from anywhere (`0.0.0.0/0`), because Render's free plan has no fixed IP address.
+- Render's free plan sleeps after about 15 minutes without visitors; the first visit after that can take up to a minute.
 
 ## Frontend structure
 
-| Folder                  | Contents                                                                                                                    |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `features/`             | Screens by area: `auth`, `chats` (chat list, conversation, info panel, search), `admin`, `notifications`, `shell`           |
-| `store/`                | Zustand stores: auth, chats, messages, conversation tools, notifications, presence, receipts, toasts, desktop notifications |
-| `realtime/`             | The single Socket.IO connection and `useRealtime`, which routes every server event to the stores                            |
-| `api/`                  | Axios client (adds the access token, refreshes on `401`) and one module per API area                                        |
-| `components/`, `utils/` | Shared UI (dialog, switch, avatar, …) and pure helpers with unit tests                                                      |
-
-- **Optimistic sending:** drafts appear immediately and are reconciled with the server's copy.
-- **Catching up:** after a reconnect the app reloads the chat list and notifications, fetches messages newer than the last one it has, and refreshes the ones on screen.
-- **Responsive:** one layout that becomes a two-pane view from 768 px and adds a side panel from 1024 px.
+| Folder                  | Contents                                                                    |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `features/`             | Screens: sign-in, chats, admin, notifications, the app shell                |
+| `store/`                | Zustand stores: login, chats, messages, notifications, online status, …     |
+| `realtime/`             | The one Socket.IO connection, and the code that sends each event to a store |
+| `api/`                  | API calls; adds the access token and refreshes it when it expires           |
+| `components/`, `utils/` | Shared UI pieces and small helpers, with unit tests                         |
 
 ## Scaling
 
-Today everything runs in one NestJS process, which is enough for a pilot with hundreds of concurrent users. To run several instances behind a load balancer:
-
-1. Add the Socket.IO Redis adapter so a broadcast from one instance reaches sockets on the others.
-2. Move presence counts and the per-user send limiter to Redis.
-3. Nothing else changes: access tokens are stateless, refresh tokens are in MongoDB, and events are emitted after database writes.
-
-The database side scales with the existing indexes (every hot query is served by an index that starts with `conversationId` or `userId`) and can later be sharded by `conversationId`.
+- **Today:** one NestJS server, enough for hundreds of people online at once.
+- **More servers:** add the Socket.IO Redis adapter, so a message sent on one server reaches people connected to another, and move online status and the message rate limit to Redis. Nothing else changes.
+- **Database:** every frequent query uses an index that starts with `conversationId` or `userId`, so collections can later be sharded by conversation.
