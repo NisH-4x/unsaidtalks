@@ -1,6 +1,6 @@
 # Architecture
 
-How the UnsaidTalks chat portal is put together: the deployed system, the backend modules, how a message travels, how sessions work, and where each rule is enforced. The database is described in [DATABASE.md](DATABASE.md); WebSocket events and rooms are listed in the [README](../README.md#real-time-design).
+How the UnsaidTalks chat portal is put together: the deployed system, the backend modules, how a message travels, how sessions work, and where each rule is enforced. The database is described in [DATABASE.md](DATABASE.md); WebSocket rooms and events are explained in the [README](../README.md#3-real-time-design), with the full event list in [DETAILS.md](DETAILS.md#real-time-design-in-depth).
 
 ## System overview
 
